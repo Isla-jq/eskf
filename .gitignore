@@ -1,3 +1,8 @@
+.vscode
+.marscode
+.build
+.log
+.install
 # Prerequisites
 *.d
 
