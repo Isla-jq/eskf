@@ -1,6 +1,7 @@
 #include "eskf_rtk_imu/gps_processor.hpp"
 #include "eskf_rtk_imu/utils.hpp"
 #include <Eigen/Geometry>
+#include <cmath>
 
 namespace ErrorStateKalmanFilter
 {
@@ -37,9 +38,11 @@ namespace ErrorStateKalmanFilter
                                            State *state)
     {
         // Compute yaw residual (wrap to [-pi, pi))
-        Eigen::Vector3d euler = state->G_R_I.eulerAngles(2, 1, 0);
-        double residual = gps_data_ptr->yaw - euler[0];
-        residual = atan2(sin(residual), cos(residual));
+        // 用 atan2(R(1,0), R(0,0)) 取航向，取值域为 (-pi, pi]；
+        // Eigen 的 eulerAngles(2, 1, 0)[0] 仅有 [0, pi]，负航向会被折成正角导致残差算错
+        const double yaw = std::atan2(state->G_R_I(1, 0), state->G_R_I(0, 0));
+        double residual = gps_data_ptr->yaw - yaw;
+        residual = std::atan2(std::sin(residual), std::cos(residual));
 
         // Measurement Jacobian: H = [0,0,0, 0,0,0, 0,0,1, 0,...,0] — observes theta_z (yaw error state)
         Eigen::Matrix<double, 1, 18> H = Eigen::Matrix<double, 1, 18>::Zero();

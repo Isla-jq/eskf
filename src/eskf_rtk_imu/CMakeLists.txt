@@ -43,6 +43,26 @@ install(TARGETS eskf_rtk_imu_node
   DESTINATION lib/${PROJECT_NAME})
 
 if(BUILD_TESTING)
+  find_package(ament_cmake_gtest REQUIRED)
+  ament_add_gtest(test_eskf test/test_eskf.cpp)
+  if(TARGET test_eskf)
+    target_include_directories(test_eskf
+      PRIVATE
+      ${CMAKE_CURRENT_LIST_DIR}/include
+      ${GeographicLib_INCLUDE_DIRS})
+    target_link_libraries(test_eskf
+      ${GeographicLib_LIBRARIES}
+      Eigen3::Eigen)
+    ament_target_dependencies(test_eskf
+      rclcpp
+    )
+    target_sources(test_eskf
+      PRIVATE
+      ${CMAKE_CURRENT_LIST_DIR}/src/gps_processor.cpp
+      ${CMAKE_CURRENT_LIST_DIR}/src/imu_processor.cpp
+    )
+  endif()
+
   find_package(ament_lint_auto REQUIRED)
 
   # the following line skips the linter which checks for copyrights
@@ -53,6 +73,11 @@ if(BUILD_TESTING)
   # comment the line when this package is in a git repo and when
   # a copyright and license is added to all source files
   set(ament_cmake_cpplint_FOUND TRUE)
+
+  # skip the code style check (uncrustify): this package uses 4-space
+  # indentation, which does not match the ROS 2 uncrustify default (2-space)
+  list(APPEND AMENT_LINT_AUTO_EXCLUDE ament_cmake_uncrustify)
+
   ament_lint_auto_find_test_dependencies()
 endif()
 

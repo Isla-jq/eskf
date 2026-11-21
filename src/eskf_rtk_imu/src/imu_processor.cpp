@@ -15,8 +15,8 @@ namespace ErrorStateKalmanFilter
         const Eigen::Vector3d acc_unbias = 0.5 * (last_imu->acc + cur_imu->acc) - state->acc_bias;
         const Eigen::Vector3d gyro_unbias = 0.5 * (last_imu->gyro + cur_imu->gyro) - state->gyro_bias;
 
-        state->G_p_I = last_state.G_p_I + last_state.G_v_I * delta_t + 0.5 * last_state.G_R_I * acc_unbias * delta_t2 + 0.5 * gravity_ * delta_t2;
-        state->G_v_I = last_state.G_v_I + last_state.G_R_I * acc_unbias * delta_t + gravity_ * delta_t;
+        state->G_p_I = last_state.G_p_I + last_state.G_v_I * delta_t + 0.5 * last_state.G_R_I * acc_unbias * delta_t2 + 0.5 * last_state.gravity * delta_t2;
+        state->G_v_I = last_state.G_v_I + last_state.G_R_I * acc_unbias * delta_t + last_state.gravity * delta_t;
 
         const Eigen::Vector3d delta_angle_axis = gyro_unbias * delta_t;
         if (delta_angle_axis.norm() > 1e-12)
@@ -37,6 +37,7 @@ namespace ErrorStateKalmanFilter
         // conpute F
         Eigen::Matrix<double, 18, 18> F_x = Eigen::Matrix<double, 18, 18>::Identity();
         F_x.block<3, 3>(0, 3) = Eigen::Matrix3d::Identity() * delta_t;
+        F_x.block<3, 3>(0, 15) = Eigen::Matrix3d::Identity() * 0.5 * delta_t2;
 
         F_x.block<3, 3>(3, 6) = -state->G_R_I * GetSkewMatrix(acc_unbias) * delta_t;
         F_x.block<3, 3>(3, 12) = -state->G_R_I * delta_t;

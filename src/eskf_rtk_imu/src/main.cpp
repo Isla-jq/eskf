@@ -9,6 +9,7 @@
 #include "eskf_rtk_imu/utils.hpp"
 #include "Eigen/Geometry"
 #include "std_msgs/msg/float64.hpp"
+#include "eskf_rtk_imu/imu_queue.hpp"
 
 class ESKFFusionNode : public rclcpp::Node
 {
@@ -20,7 +21,8 @@ public:
                        last_imu_data_ptr(nullptr),
                        first_imu(true),
                        first_gps(true),
-                       first_gps_yaw(true)
+                       first_gps_yaw(true),
+                       imu_init_done(false)
     {
         this->declare_parameter<double>("acc_noise", 0.01);
         this->declare_parameter<double>("gyro_noise", 0.01);
@@ -45,6 +47,12 @@ public:
         gravity_(1) = 0.0;
         gravity_(2) = -9.7944;
         state_->G_p_I = {0., 0., 0.};
+        state_->G_v_I = Eigen::Vector3d::Zero();
+        state_->G_R_I.setIdentity();
+        state_->acc_bias = Eigen::Vector3d::Zero();
+        state_->gyro_bias = Eigen::Vector3d::Zero();
+        // 重力是 18 维状态量之一，用配置值做初值，之后由 GPS 更新估计
+        state_->gravity = gravity_;
         state_->cov.setIdentity();
         state_->cov.block<3, 3>(0, 0) *= 0.01;   // 位置：0.1 标准差
         state_->cov.block<3, 3>(3, 3) *= 0.04;   // 速度：~1 m/s
@@ -53,7 +61,7 @@ public:
         state_->cov.block<3, 3>(12, 12) *= 1e-3; // 加速度零偏
         state_->cov.block<3, 3>(15, 15) *= 1e-6; // 重力
 
-        imu_processor_ = std::make_shared<ErrorStateKalmanFilter::ImuProcessor>(acc_noise_, gyro_noise_, acc_bias_noise_, gyro_bias_noise_, gravity_);
+        imu_processor_ = std::make_shared<ErrorStateKalmanFilter::ImuProcessor>(acc_noise_, gyro_noise_, acc_bias_noise_, gyro_bias_noise_);
         gps_processor_ = std::make_shared<ErrorStateKalmanFilter::GpsProcessor>(Eigen::Vector3d(I_p_Gps_x_, I_p_Gps_y_, I_p_Gps_z_));
 
         origin_rtk_sub_ = this->create_subscription<sensor_msgs::msg::NavSatFix>("handsfree/rtk/gnss",
@@ -67,6 +75,7 @@ public:
                                                                     std::bind(&ESKFFusionNode::origin_imu_callback, this, std::placeholders::_1));
         fusioned_gnss_pub_ = this->create_publisher<sensor_msgs::msg::NavSatFix>("rtk_imu_fusion_gnss",
                                                                                  rclcpp::SensorDataQoS());
+                                                                                 ImuQueue imu_queue_;
         // fusioned_odom_pub_ = this->create_publisher<nav_msgs::msg::Odometry>("rtk_imu_fusion_odom",
         //                                                                         10);
     }
@@ -86,9 +95,16 @@ private:
     std::shared_ptr<ErrorStateKalmanFilter::GpsProcessor> gps_processor_;
     std::shared_ptr<ErrorStateKalmanFilter::State> state_;
     ErrorStateKalmanFilter::ImuDataPtr last_imu_data_ptr;
-    bool first_imu, first_gps, first_gps_yaw;
+    bool first_imu, first_gps, first_gps_yaw, imu_init_done;
     Eigen::Vector3d first_lla;
+    
+    std::thread imu_worker_;
+    std::atomic<bool> running_{true};
 
+    // ESKF 状态（只被 worker 线程写）
+    std::unique_ptr<ESKFState> state_;
+
+    
     void origin_rtk_callback(const sensor_msgs::msg::NavSatFix::SharedPtr msg)
     {
         ErrorStateKalmanFilter::GpsPositionDataPtr gps_data_ptr = std::make_shared<ErrorStateKalmanFilter::GpsPositionData>();
@@ -127,6 +143,16 @@ private:
         }
         else
         {
+            if (!imu_init_done)
+            {
+                // 静止初始化结束，用 IMU 均值初始化零偏：
+                // 陀螺静止读数即为零偏；加速度计静止时测的是比力 -g，
+                // 故 b_a = mean_acc + gravity（水平安装、R ≈ I 时成立）
+                imu_init_done = true;
+                state_->gyro_bias = imu_processor_->GetMeanGyro();
+                state_->acc_bias = imu_processor_->GetMeanAcc() + state_->gravity;
+            }
+
             if (first_gps)
             {
                 // GPS 还未到，只存 IMU 数据不融合
